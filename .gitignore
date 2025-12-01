@@ -1,0 +1,16 @@
+Dependency Directories
+
+node_modules
+client/node_modules
+server/node_modules
+/server/dist # If using TypeScript compilation
+
+Environment Variables (CRITICAL: Do not commit these!)
+
+.env
+.DS_Store
+
+React Build/Temp Files
+
+/client/build
+/client/.env
