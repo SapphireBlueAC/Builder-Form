@@ -15,9 +15,18 @@ if (!process.env.AIRTABLE_CLIENT_ID) {
   process.exit(1);
 }
 
+// CRITICAL FIX: Define allowed origins, including the live Vercel frontend.
+// The user MUST set VERCEL_FRONTEND_URL in their Render environment variables.
+const ALLOWED_ORIGIN = process.env.VERCEL_FRONTEND_URL || 'http://localhost:3000'; 
 const app = express();
-// Allow CORS from localhost:3000 and the deployed Vercel URL (must be set in Vercel)
-app.use(cors({ origin: 'http://localhost:3000', credentials: true })); 
+
+// --- CORS Configuration (Updated for Cross-Site Credential Flow) ---
+app.use(cors({ 
+    // Allowing the specific frontend URL, including Vercel deployment and localhost for dev.
+    origin: ALLOWED_ORIGIN, 
+    // CRITICAL: Must be true for cookies to be sent/received cross-domain
+    credentials: true 
+})); 
 app.use(express.json());
 app.use(cookieParser());
 
@@ -78,7 +87,14 @@ const requireAuth = async (req, res, next) => {
 app.get('/auth/login', (req, res) => {
   const verifier = generateRandomString();
   const challenge = base64URLEncode(sha256(verifier));
-  res.cookie('auth_verifier', verifier, { httpOnly: true, maxAge: 300000 }); 
+  // FIX: Adding SameSite=None and Secure=true to auth_verifier cookie 
+  // to ensure it survives the cross-site redirect (Airtable back to Render).
+  res.cookie('auth_verifier', verifier, { 
+    httpOnly: true, 
+    maxAge: 300000, 
+    sameSite: 'None', 
+    secure: true 
+  }); 
 
   // NEW FIX: Get the return URL from the query, default to localhost
   const frontendUrl = req.query.returnTo ? decodeURIComponent(req.query.returnTo.toString()) : 'http://localhost:3000/';
@@ -146,8 +162,17 @@ app.get('/auth/callback', async (req, res) => {
     }
 
     res.clearCookie('auth_verifier');
-    res.cookie('userId', user._id.toString(), { httpOnly: false });
-    res.redirect(finalRedirectUrl); // <-- FIX: Redirects to the live Vercel URL
+    
+    // *** CRITICAL FIX: Add SameSite=None and Secure=true to solve the login loop ***
+    // This allows the cookie to be sent back to the Vercel frontend (Site A) 
+    // from the Render backend (Site B).
+    res.cookie('userId', user._id.toString(), { 
+        httpOnly: false, 
+        sameSite: 'None', 
+        secure: true // MUST be true for SameSite=None to work
+    });
+    
+    res.redirect(finalRedirectUrl); 
   } catch (error) {
     console.error("Auth Error:", error.response?.data || error.message);
     res.status(500).json({ error: "Auth failed" });
@@ -177,7 +202,8 @@ app.post('/api/forms', requireAuth, async (req, res) => {
     
     // Webhook Registration Logic (Optional - Comment out if not using ngrok)
     // NOTE: This part is highly dependent on your live URL (NGROK_URL)
-    const NGROK_URL = "https://atonally-reprobative-eulalia.ngrok-free.dev"; // Needs to be dynamic in a real deploy
+    // Reverting NGROK_URL to a placeholder if the user hasn't set it up
+    const NGROK_URL = process.env.NGROK_URL; 
 
     if (NGROK_URL && NGROK_URL.startsWith('http')) {
       try {
