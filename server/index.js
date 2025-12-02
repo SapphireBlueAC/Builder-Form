@@ -1,4 +1,5 @@
 const path = require('path');
+// Ensure dotenv is configured to read the .env file in the server directory
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const express = require('express');
@@ -6,15 +7,11 @@ const mongoose = require('mongoose');
 const cors = require('cors');
 const axios = require('axios');
 const cookieParser = require('cookie-parser');
-const crypto = require('crypto');
+const crypto = require('crypto'); // Built-in Node module for security
 
-// --- 🟢 PASTE YOUR NGROK URL HERE ---
-const NGROK_URL = "https://atonally-reprobative-eulalia.ngrok-free.dev"; 
-// ------------------------------------
-
-// Check Keys
+// --- Global Configuration Check ---
 if (!process.env.AIRTABLE_CLIENT_ID) {
-  console.error("❌ ERROR: Missing keys in server/.env");
+  console.error("❌ FATAL ERROR: Missing AIRTABLE_CLIENT_ID in server/.env file.");
   process.exit(1);
 }
 
@@ -23,13 +20,18 @@ app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
 app.use(express.json());
 app.use(cookieParser());
 
+// --- DB Connection ---
 mongoose.connect(process.env.MONGO_URI || "mongodb://127.0.0.1:27017/airtable-builder")
   .then(() => console.log("✅ MongoDB Connected"))
-  .catch(err => console.error("❌ MongoDB Error:", err));
+  .catch(err => console.error("❌ MongoDB Error:", err.message));
 
-// --- Helpers ---
+// --- PKCE & Security Helpers ---
+// Encodes buffer to Base64URL format (no + / or =)
 const base64URLEncode = (str) => str.toString('base64').replace(/\+/g, '-').replace(/\//g, '_').replace(/=/g, '');
+// Hashes string using SHA256
 const sha256 = (buffer) => crypto.createHash('sha256').update(buffer).digest();
+// Generates a random unguessable string for state
+const generateRandomString = (length = 32) => base64URLEncode(crypto.randomBytes(length));
 
 // --- Models ---
 const userSchema = new mongoose.Schema({
@@ -70,34 +72,48 @@ const requireAuth = async (req, res, next) => {
 };
 
 // --- Auth Routes ---
+
+// 1. LOGIN STEP (Generating PKCE challenge and secure state)
 app.get('/auth/login', (req, res) => {
-  const verifier = base64URLEncode(crypto.randomBytes(32));
+  const verifier = generateRandomString();
   const challenge = base64URLEncode(sha256(verifier));
   res.cookie('auth_verifier', verifier, { httpOnly: true, maxAge: 300000 }); 
 
+  // FIX: Generate a cryptographically secure random state (was static 'random123')
+  const state = generateRandomString();
+
   const scopes = 'data.records:read data.records:write schema.bases:read webhook:manage user.email:read';
-  const state = 'random123';
   
-  const authUrl = `https://airtable.com/oauth2/v1/authorize?client_id=${process.env.AIRTABLE_CLIENT_ID.trim()}&redirect_uri=${encodeURIComponent(process.env.AIRTABLE_REDIRECT_URI.trim())}&response_type=code&scope=${encodeURIComponent(scopes)}&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`;
+  // Trim environment variables to prevent hidden whitespace errors
+  const CLIENT_ID = process.env.AIRTABLE_CLIENT_ID.trim();
+  const REDIRECT_URI = process.env.AIRTABLE_REDIRECT_URI.trim();
+
+  const authUrl = `https://airtable.com/oauth2/v1/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scopes)}&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`;
   res.redirect(authUrl);
 });
 
+// 2. CALLBACK STEP (Exchanging code for token)
 app.get('/auth/callback', async (req, res) => {
   const { code, error, error_description } = req.query;
   const verifier = req.cookies.auth_verifier;
 
   if (error) return res.status(400).send(`Error: ${error_description}`);
   if (!code) return res.status(400).send("No code received.");
-  if (!verifier) return res.status(400).send("Session expired.");
+  // Security Check: verifier must be present to prove PKCE flow completion
+  if (!verifier) return res.status(400).send("Session expired. Connect again.");
 
   try {
-    const credentials = Buffer.from(`${process.env.AIRTABLE_CLIENT_ID.trim()}:${process.env.AIRTABLE_CLIENT_SECRET.trim()}`).toString('base64');
+    const CLIENT_ID = process.env.AIRTABLE_CLIENT_ID.trim();
+    const CLIENT_SECRET = process.env.AIRTABLE_CLIENT_SECRET.trim();
+    const REDIRECT_URI = process.env.AIRTABLE_REDIRECT_URI.trim();
+    
+    const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
     
     const response = await axios.post('https://airtable.com/oauth2/v1/token', 
       new URLSearchParams({
         grant_type: 'authorization_code',
         code: code.toString(),
-        redirect_uri: process.env.AIRTABLE_REDIRECT_URI.trim(),
+        redirect_uri: REDIRECT_URI,
         code_verifier: verifier 
       }), 
       { headers: { 'Authorization': `Basic ${credentials}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
@@ -121,7 +137,7 @@ app.get('/auth/callback', async (req, res) => {
   }
 });
 
-// --- Main Routes ---
+// --- Main API Routes ---
 
 app.get('/api/bases', requireAuth, async (req, res) => {
   try {
@@ -142,8 +158,11 @@ app.post('/api/forms', requireAuth, async (req, res) => {
   try {
     const newForm = await Form.create({ userId: req.user._id.toString(), ...req.body });
     
-    // Webhook Registration Logic
-    if (NGROK_URL) {
+    // Webhook Registration Logic (Optional - Comment out if not using ngrok)
+    // NOTE: This part is highly dependent on your live URL (NGROK_URL)
+    const NGROK_URL = "https://atonally-reprobative-eulalia.ngrok-free.dev"; // Needs to be dynamic in a real deploy
+
+    if (NGROK_URL && NGROK_URL.startsWith('http')) {
       try {
         const webhookUrl = `${NGROK_URL}/webhooks/airtable/${newForm._id}`;
         console.log("🔗 Registering webhook:", webhookUrl);
@@ -208,7 +227,7 @@ app.get('/api/forms/:formId/responses', requireAuth, async (req, res) => {
 app.post('/webhooks/airtable/:formId', async (req, res) => {
   const { formId } = req.params;
   console.log(`\n🔔 BEEP BEEP! Webhook received for Form ${formId}`);
-  // In a real app, parse `req.body` to sync data.
+  // Acknowledge receipt immediately
   res.status(200).send('OK');
 });
 
