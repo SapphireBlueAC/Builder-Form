@@ -3,7 +3,9 @@ import axios from "axios";
 import { FormRenderer } from "./FormRenderer";
 import { ResponseViewer } from "./ResponseViewer";
 
-// Allow cookies (for our userId) to be sent with requests
+// --- GLOBAL CONFIGURATION ---
+// Base URL for API calls. Vercel injects the Render URL here.
+const API_URL = process.env.REACT_APP_API_URL;
 axios.defaults.withCredentials = true;
 
 // Only allow these Airtable field types to keep things simple
@@ -16,7 +18,6 @@ const ALLOWED_TYPES = [
 
 function App() {
   const [isConnected, setIsConnected] = useState(false);
-  // <--- 2. Add 'RESPONSES' to the allowed views
   const [view, setView] = useState<"BUILDER" | "RENDERER" | "RESPONSES">(
     "BUILDER"
   );
@@ -25,14 +26,12 @@ function App() {
   const [bases, setBases] = useState<any[]>([]);
   const [tables, setTables] = useState<any[]>([]);
   const [savedForms, setSavedForms] = useState<any[]>([]);
-  const [activeForm, setActiveForm] = useState<any>(null); // The form we are currently viewing
+  const [activeForm, setActiveForm] = useState<any>(null);
 
   // --- Builder State (Selection) ---
   const [selectedBase, setSelectedBase] = useState("");
   const [selectedTable, setSelectedTable] = useState("");
   const [tableFields, setTableFields] = useState<any[]>([]);
-
-  // This state holds the FULL configuration for selected fields (including the logic rules)
   const [formFields, setFormFields] = useState<any[]>([]);
 
   // --- Logic Modal State ---
@@ -56,19 +55,21 @@ function App() {
   // --- API Helpers ---
   const fetchBases = async () => {
     try {
-      const res = await axios.get("process.env.REACT_APP_API_URL");
+      // FIX: Use API_URL constant with base path
+      const res = await axios.get(`${API_URL}/api/bases`);
       setBases(res.data);
     } catch (e) {
-      console.error(e);
+      console.error("Error fetching bases. Token expired or API down.", e);
     }
   };
 
   const fetchSavedForms = async () => {
     try {
-      const res = await axios.get("process.env.REACT_APP_API_URL");
+      // FIX: Use API_URL constant with base path
+      const res = await axios.get(`${API_URL}/api/forms`);
       setSavedForms(res.data);
     } catch (e) {
-      console.error(e);
+      console.error("Error fetching saved forms.", e);
     }
   };
 
@@ -83,12 +84,13 @@ function App() {
 
     if (baseId && baseId !== "-- Choose Base --") {
       try {
+        // FIX: Use API_URL constant with interpolation
         const res = await axios.get(
-          `process.env.REACT_APP_API_URL${baseId}/tables`
+          `${API_URL}/api/bases/${baseId}/tables`
         );
         setTables(res.data);
       } catch (e) {
-        console.error(e);
+        console.error("Error fetching tables.", e);
       }
     }
   };
@@ -168,20 +170,21 @@ function App() {
     setLogicRule({ triggerFieldId: "", operator: "equals", value: "" });
   };
 
-  // Save the entire form to MongoDB
+  // Save the entire form to MongoDB and register webhook
   const saveForm = async () => {
     if (formFields.length === 0) return;
     try {
-      await axios.post("process.env.REACT_APP_API_URL/api/forms", {
+      // FIX: Use API_URL constant with base path
+      await axios.post(`${API_URL}/api/forms`, {
         baseId: selectedBase,
         tableId: selectedTable,
         title: "Conditional Form " + new Date().toLocaleTimeString(),
         fields: formFields,
       });
-      alert("Form Saved Successfully!");
+      alert("Form Saved Successfully! Webhook Registered.");
       fetchSavedForms();
     } catch (e) {
-      console.error(e);
+      console.error("Error saving form:", e);
       alert("Error saving form");
     }
   };
@@ -191,7 +194,7 @@ function App() {
     return <FormRenderer form={activeForm} onBack={() => setView("BUILDER")} />;
   }
 
-  // <--- 3. VIEW: RESPONSES (The Results Mode) ---
+  // --- VIEW: RESPONSES (The Results Mode) ---
   if (view === "RESPONSES" && activeForm) {
     return (
       <ResponseViewer form={activeForm} onBack={() => setView("BUILDER")} />
@@ -220,8 +223,9 @@ function App() {
         <h1 style={{ margin: 0 }}>Airtable Form Builder</h1>
         {!isConnected && (
           <button
+            // FINAL FIX: Use template literal for login redirect
             onClick={() =>
-              (window.location.href = "process.env.REACT_APP_API_URL")
+              (window.location.href = `${API_URL}/auth/login`)
             }
             style={styles.connectBtn}
           >
@@ -258,7 +262,6 @@ function App() {
                   {form.title}
                 </strong>
 
-                {/* <--- 4. Updated Buttons for View and Results */}
                 <div style={{ display: "flex", gap: "10px" }}>
                   <button
                     onClick={() => {
