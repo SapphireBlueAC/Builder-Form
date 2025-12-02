@@ -8,19 +8,25 @@ const axios = require('axios');
 const crypto = require('crypto'); 
 
 // --- Global Configuration Check ---
-if (!process.env.AIRTABLE_CLIENT_ID) {
-  console.error("❌ FATAL ERROR: Missing AIRTABLE_CLIENT_ID in server/.env file.");
+const requiredEnvVars = [
+  'AIRTABLE_CLIENT_ID', 
+  'AIRTABLE_CLIENT_SECRET', 
+  'AIRTABLE_REDIRECT_URI', 
+  'VERCEL_FRONTEND_URL'
+];
+
+const missingVars = requiredEnvVars.filter(key => !process.env[key]);
+
+if (missingVars.length > 0) {
+  console.error(`❌ FATAL ERROR: Missing required environment variables: ${missingVars.join(', ')}`);
   process.exit(1);
 }
 
-const ALLOWED_ORIGIN = process.env.VERCEL_FRONTEND_URL || 'http://localhost:3000'; 
+const ALLOWED_ORIGIN = process.env.VERCEL_FRONTEND_URL; 
 const app = express();
 
 // --- CORS Configuration ---
-// We no longer need credentials: true because we aren't using cookies!
-app.use(cors({ 
-    origin: ALLOWED_ORIGIN,
-})); 
+app.use(cors({ origin: ALLOWED_ORIGIN })); 
 app.use(express.json());
 
 // --- DB Connection ---
@@ -61,50 +67,57 @@ const responseSchema = new mongoose.Schema({
 });
 const Response = mongoose.model('Response', responseSchema);
 
-// --- Middleware (Updated for Token Auth) ---
+// --- Middleware (Token Auth) ---
 const requireAuth = async (req, res, next) => {
-  // NEW: Check Authorization Header instead of Cookies
   const authHeader = req.headers['authorization'];
-  const token = authHeader && authHeader.split(' ')[1]; // "Bearer <token>"
+  const token = authHeader && authHeader.split(' ')[1]; 
 
   if (!token) return res.status(401).json({ error: "Unauthorized: No token provided" });
 
-  // In this simple version, the "token" is just the userId. 
-  // In a complex app, this would be a JWT.
   const user = await User.findById(token);
   if (!user) return res.status(401).json({ error: "User not found" });
   req.user = user;
   next();
 };
 
-// --- Auth Routes ---
+// --- Auth Routes (Fixed: No Cookies) ---
 
 app.get('/auth/login', (req, res) => {
+  // 1. Generate PKCE Verifier & Challenge
   const verifier = generateRandomString();
   const challenge = base64URLEncode(sha256(verifier));
   
-  // We can still use a cookie for the temporary verifier (short lived)
-  res.cookie('auth_verifier', verifier, { httpOnly: true, maxAge: 300000, secure: true, sameSite: 'None' }); 
-
-  const frontendUrl = req.query.returnTo ? decodeURIComponent(req.query.returnTo.toString()) : 'http://localhost:3000/';
-  const securityState = generateRandomString();
-  const state = `${securityState}--${base64URLEncode(Buffer.from(frontendUrl))}`;
+  // 2. Determine Frontend URL
+  const frontendUrl = req.query.returnTo ? decodeURIComponent(req.query.returnTo.toString()) : process.env.VERCEL_FRONTEND_URL;
+  
+  // 3. PACK THE VERIFIER INTO THE STATE
+  // Format: "verifier--base64Url"
+  // This allows us to recover the verifier in the callback without cookies!
+  const statePayload = `${verifier}--${base64URLEncode(Buffer.from(frontendUrl))}`;
   
   const scopes = 'data.records:read data.records:write schema.bases:read webhook:manage user.email:read';
   const CLIENT_ID = process.env.AIRTABLE_CLIENT_ID.trim();
   const REDIRECT_URI = process.env.AIRTABLE_REDIRECT_URI.trim();
 
-  const authUrl = `https://airtable.com/oauth2/v1/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scopes)}&state=${state}&code_challenge=${challenge}&code_challenge_method=S256`;
+  const authUrl = `https://airtable.com/oauth2/v1/authorize?client_id=${CLIENT_ID}&redirect_uri=${encodeURIComponent(REDIRECT_URI)}&response_type=code&scope=${encodeURIComponent(scopes)}&state=${statePayload}&code_challenge=${challenge}&code_challenge_method=S256`;
+  
   res.redirect(authUrl);
 });
 
 app.get('/auth/callback', async (req, res) => {
   const { code, error, error_description, state } = req.query;
-  const verifier = req.cookies.auth_verifier;
 
   if (error) return res.status(400).send(`Error: ${error_description}`);
   if (!code) return res.status(400).send("No code received.");
-  if (!verifier) return res.status(400).send("Session expired. Connect again.");
+  if (!state) return res.status(400).send("No state received.");
+
+  // 1. Unpack Verifier and URL from State
+  // We split the string by "--" to get our two pieces back
+  const parts = state.toString().split('--');
+  if (parts.length !== 2) return res.status(400).send("Invalid state parameter.");
+
+  const verifier = parts[0]; // Recovered verifier!
+  const frontendUrl = Buffer.from(parts[1], 'base64').toString('utf8');
 
   try {
     const CLIENT_ID = process.env.AIRTABLE_CLIENT_ID.trim();
@@ -113,12 +126,13 @@ app.get('/auth/callback', async (req, res) => {
     
     const credentials = Buffer.from(`${CLIENT_ID}:${CLIENT_SECRET}`).toString('base64');
     
+    // 2. Exchange Code for Token (Using the recovered verifier)
     const response = await axios.post('https://airtable.com/oauth2/v1/token', 
       new URLSearchParams({
         grant_type: 'authorization_code',
         code: code.toString(),
         redirect_uri: REDIRECT_URI,
-        code_verifier: verifier 
+        code_verifier: verifier // Using the value from state, NOT cookie
       }), 
       { headers: { 'Authorization': `Basic ${credentials}`, 'Content-Type': 'application/x-www-form-urlencoded' } }
     );
@@ -132,24 +146,13 @@ app.get('/auth/callback', async (req, res) => {
       { new: true, upsert: true }
     );
 
-    let finalRedirectUrl = 'http://localhost:3000/'; 
-    if (state && typeof state === 'string' && state.includes('--')) {
-        const parts = state.split('--');
-        if (parts.length === 2) {
-            finalRedirectUrl = Buffer.from(parts[1], 'base64').toString('utf8');
-        }
-    }
-
-    res.clearCookie('auth_verifier');
-    
-    // NEW STRATEGY: Pass the token (userId) in the URL Query Param
-    // The frontend will pluck this out and save it.
-    const redirectWithToken = `${finalRedirectUrl}?token=${user._id.toString()}`;
+    // 3. Redirect back to Frontend with Token
+    const redirectWithToken = `${frontendUrl}?token=${user._id.toString()}`;
     res.redirect(redirectWithToken);
 
   } catch (error) {
-    console.error("Auth Error:", error.response?.data || error.message);
-    res.status(500).json({ error: "Auth failed" });
+    console.error("Auth Error Detail:", error.response?.data || error.message);
+    res.status(500).send(`Internal Server Error: ${error.message}`);
   }
 });
 
