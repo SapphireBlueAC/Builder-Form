@@ -5,9 +5,9 @@ import axios from "axios";
 // to resolve the 'Could not resolve' import errors.
 
 // --- GLOBAL CONFIGURATION (FIXED) ---
-// !!! IMPORTANT: THIS MUST BE YOUR ACTUAL RENDER BACKEND URL !!!
-const API_URL = 'https://conditional-form-backend.onrender.com'; // <--- **YOUR LIVE RENDER URL HERE**
-const isPlaceholderActive = false; // We hardcoded the URL, so the placeholder check is removed.
+// !!! IMPORTANT: THIS IS SET TO THE URL FOUND IN YOUR RENDER LOGS !!!
+const API_URL = 'https://builder-form.onrender.com'; // <--- **CORRECTED LIVE RENDER URL**
+const isPlaceholderActive = false; // The URL is set, so the placeholder check is removed.
 
 if (!isPlaceholderActive) {
     axios.defaults.withCredentials = true;
@@ -104,8 +104,9 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, onBack }) => {
   };
 
   const handleSubmit = async () => {
-    // We can no longer check against API_URL_PLACEHOLDER, so we use the boolean flag
+    // We use the flag now that we've removed the string comparison.
     if (isPlaceholderActive) {
+        // NOTE: We replace alert() with a modal/message box in production-grade code.
         alert("Configuration Error: Please set the actual API_URL in App.tsx before submitting.");
         return;
     }
@@ -117,8 +118,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, onBack }) => {
     });
 
     if (missingFields.length > 0) {
-      const fieldNames = missingFields.map((f: any) => f.label).join(", ");
-      alert(`Please fill in the following required fields: ${fieldNames}`);
+      alert(`Please fill in the following required fields: ${missingFields.map((f: any) => f.label).join(", ")}`);
       return;
     }
 
@@ -128,7 +128,6 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, onBack }) => {
       console.log("📤 Submitting form...", answers);
 
       // 2. SUBMIT TO SERVER
-      // Using relative path, relying on axios.defaults.baseURL set globally.
       await axios.post(
         `/api/forms/${form._id}/submit`,
         answers
@@ -324,6 +323,7 @@ function App() {
   const [view, setView] = useState<"BUILDER" | "RENDERER" | "RESPONSES">(
     "BUILDER"
   );
+  // The error message is now conditional based on the isPlaceholderActive flag
   const [connectionMessage, setConnectionMessage] = useState<string | null>(
     isPlaceholderActive ? "Configuration Error: API_URL not set." : null
   );
