@@ -181,10 +181,12 @@ function App() {
         title: "Conditional Form " + new Date().toLocaleTimeString(),
         fields: formFields,
       });
+      // Replace alert with custom message box in a real application
       alert("Form Saved Successfully! Webhook Registered.");
       fetchSavedForms();
     } catch (e) {
       console.error("Error saving form:", e);
+      // Replace alert with custom message box in a real application
       alert("Error saving form");
     }
   };
@@ -223,10 +225,11 @@ function App() {
         <h1 style={{ margin: 0 }}>Airtable Form Builder</h1>
         {!isConnected && (
           <button
-            // FINAL FIX: Use template literal for login redirect
-            onClick={() =>
-              (window.location.href = `${API_URL}/auth/login`)
-            }
+            // FINAL FIX: Pass the current Vercel domain to the backend using 'returnTo' parameter
+            onClick={() => {
+              const returnTo = encodeURIComponent(window.location.origin);
+              window.location.href = `${API_URL}/auth/login?returnTo=${returnTo}`;
+            }}
             style={styles.connectBtn}
           >
             Connect Airtable
