@@ -1,12 +1,18 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
-import { FormRenderer } from "./FormRenderer";
-import { ResponseViewer } from "./ResponseViewer";
+// The FormRenderer and ResponseViewer components are now defined later in this file
+// to resolve the 'Could not resolve' import errors.
 
 // --- GLOBAL CONFIGURATION ---
-// Base URL for API calls. Vercel injects the Render URL here.
-const API_URL = process.env.REACT_APP_API_URL;
-axios.defaults.withCredentials = true;
+// !!! IMPORTANT: YOU MUST REPLACE THIS PLACEHOLDER WITH YOUR ACTUAL RENDER BACKEND URL (e.g., https://your-backend-name.onrender.com) !!!
+const API_URL_PLACEHOLDER = 'YOUR_RENDER_BACKEND_URL_HERE';
+const API_URL = API_URL_PLACEHOLDER; 
+const isPlaceholderActive = API_URL === API_URL_PLACEHOLDER;
+
+if (!isPlaceholderActive) {
+    axios.defaults.withCredentials = true;
+    axios.defaults.baseURL = API_URL;
+}
 
 // Only allow these Airtable field types to keep things simple
 const ALLOWED_TYPES = [
@@ -16,10 +22,313 @@ const ALLOWED_TYPES = [
   "multipleSelects",
 ];
 
+// -----------------------------------------------------------------------------
+// --- 1. LOGIC ENGINE (Moved to the main file) ---
+// Note: This logic engine code should ideally come from logicengine.ts, 
+// but is integrated here to ensure the FormRenderer compiles without dependency errors.
+// -----------------------------------------------------------------------------
+
+export type Operator = "equals" | "notEquals" | "contains";
+
+export interface Condition {
+  questionKey: string; // The ID of the field we are checking
+  operator: Operator;
+  value: any;
+}
+
+export interface ConditionalRules {
+  logic: "AND" | "OR";
+  conditions: Condition[];
+}
+
+export function shouldShowQuestion(
+  rules: ConditionalRules | null | undefined,
+  answersSoFar: Record<string, any>
+): boolean {
+  // 1. If no rules exist, always show the question
+  if (!rules || !rules.conditions || rules.conditions.length === 0) {
+    return true;
+  }
+
+  // 2. Evaluate every condition
+  const results = rules.conditions.map((condition) => {
+    const userAnswer = answersSoFar[condition.questionKey];
+
+    // If the user hasn't answered the dependency yet, it's a mismatch
+    if (userAnswer === undefined || userAnswer === null) return false;
+
+    switch (condition.operator) {
+      case "equals":
+        // usage: answers['role'] === 'Engineer'
+        return String(userAnswer) === String(condition.value);
+
+      case "notEquals":
+        return String(userAnswer) !== String(condition.value);
+
+      case "contains":
+        // Handle arrays (Multi-select) or Strings
+        if (Array.isArray(userAnswer)) {
+          return userAnswer.includes(condition.value);
+        }
+        return String(userAnswer).includes(condition.value);
+
+      default:
+        return false;
+    }
+  });
+
+  // 3. Combine results based on AND / OR
+  if (rules.logic === "AND") {
+    return results.every((res) => res === true);
+  } else {
+    // OR logic
+    return results.some((res) => res === true);
+  }
+}
+
+// -----------------------------------------------------------------------------
+// --- 2. FORM RENDERER (Moved to the main file) ---
+// Based on the content of FormRenderer.tsx
+// -----------------------------------------------------------------------------
+
+interface FormRendererProps {
+  form: any;
+  onBack: () => void;
+}
+
+const FormRenderer: React.FC<FormRendererProps> = ({ form, onBack }) => {
+  const [answers, setAnswers] = useState<Record<string, any>>({});
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  // Update state when user types/selects
+  const handleChange = (fieldId: string, value: any) => {
+    setAnswers((prev) => ({ ...prev, [fieldId]: value }));
+  };
+
+  const handleSubmit = async () => {
+    // Check if the global baseURL is likely a placeholder before submitting
+    if (axios.defaults.baseURL === API_URL_PLACEHOLDER) {
+        alert("Configuration Error: Please set the actual API_URL in App.tsx before submitting.");
+        return;
+    }
+      
+    // 1. VALIDATION
+    const missingFields = form.fields.filter((field: any) => {
+      const isVisible = shouldShowQuestion(field.logic?.rules, answers);
+      return isVisible && field.required && !answers[field.fieldId];
+    });
+
+    if (missingFields.length > 0) {
+      const fieldNames = missingFields.map((f: any) => f.label).join(", ");
+      alert(`Please fill in the following required fields: ${fieldNames}`);
+      return;
+    }
+
+    setIsSubmitting(true);
+
+    try {
+      console.log("📤 Submitting form...", answers);
+
+      // 2. SUBMIT TO SERVER
+      // Using relative path, relying on axios.defaults.baseURL set globally.
+      await axios.post(
+        `/api/forms/${form._id}/submit`,
+        answers
+      );
+
+      alert("✅ Success! Response saved to Airtable & Database.");
+      onBack(); // Return to main list
+    } catch (error: any) {
+      console.error("❌ Submission Error:", error);
+      const msg =
+        error.response?.data?.error || error.message || "Unknown error";
+      alert(`Failed to submit: ${msg}`);
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        padding: "30px",
+        maxWidth: "600px",
+        margin: "0 auto",
+        border: "1px solid #e0e0e0",
+        borderRadius: "8px",
+        background: "#fff",
+        fontFamily: "sans-serif",
+        boxShadow: "0 2px 5px rgba(0,0,0,0.05)",
+      }}
+    >
+      <button
+        onClick={onBack}
+        style={{
+          marginBottom: "20px",
+          cursor: "pointer",
+          border: "none",
+          background: "transparent",
+          color: "#007bff",
+          fontSize: "14px",
+        }}
+      >
+        ← Back to Forms
+      </button>
+
+      <h2
+        style={{
+          marginTop: 0,
+          marginBottom: "20px",
+          borderBottom: "1px solid #f0f0f0",
+          paddingBottom: "15px",
+        }}
+      >
+        {form.title}
+      </h2>
+
+      <form onSubmit={(e) => e.preventDefault()}>
+        {form.fields.map((field: any) => {
+          // --- LOGIC ENGINE CHECK ---
+          const isVisible = shouldShowQuestion(field.logic?.rules, answers);
+
+          if (!isVisible) return null; // Hide completely if logic says so
+          // --------------------------
+
+          return (
+            <div key={field.fieldId} style={{ marginBottom: "20px" }}>
+              <label
+                style={{
+                  display: "block",
+                  fontWeight: "600",
+                  marginBottom: "8px",
+                  color: "#333",
+                }}
+              >
+                {field.label}{" "}
+                {field.required && (
+                  <span style={{ color: "red", marginLeft: "2px" }}>*</span>
+                )}
+              </label>
+
+              {/* Render Inputs based on Airtable Type */}
+
+              {(field.type === "singleLineText" ||
+                field.type === "multilineText") && (
+                <input
+                  type="text"
+                  style={AppStyles.input}
+                  value={answers[field.fieldId] || ""}
+                  onChange={(e) => handleChange(field.fieldId, e.target.value)}
+                  placeholder="Your answer..."
+                  disabled={isSubmitting}
+                />
+              )}
+
+              {field.type === "singleSelect" && (
+                <select
+                  style={AppStyles.select}
+                  value={answers[field.fieldId] || ""}
+                  onChange={(e) => handleChange(field.fieldId, e.target.value)}
+                  disabled={isSubmitting}
+                >
+                  <option value="">-- Select an option --</option>
+                  {field.options &&
+                    field.options.map((opt: string) => (
+                      <option key={opt} value={opt}>
+                        {opt}
+                      </option>
+                    ))}
+                </select>
+              )}
+
+              {/* Fallback for others */}
+              {!["singleLineText", "multilineText", "singleSelect"].includes(
+                field.type
+              ) && (
+                <div
+                  style={{
+                    padding: "10px",
+                    background: "#fff3cd",
+                    color: "#856404",
+                    borderRadius: "4px",
+                    fontSize: "13px",
+                  }}
+                >
+                  Input type <strong>{field.type}</strong> is not fully
+                  supported in this preview.
+                </div>
+              )}
+            </div>
+          );
+        })}
+
+        <button
+          onClick={handleSubmit}
+          disabled={isSubmitting}
+          style={{
+            ...AppStyles.submitBtn,
+            opacity: isSubmitting ? 0.7 : 1,
+            cursor: isSubmitting ? "not-allowed" : "pointer",
+          }}
+        >
+          {isSubmitting ? "Sending to Airtable..." : "Submit Form"}
+        </button>
+      </form>
+    </div>
+  );
+};
+
+
+// -----------------------------------------------------------------------------
+// --- 3. RESPONSE VIEWER (Placeholder) ---
+// This was missing from the provided code.
+// -----------------------------------------------------------------------------
+
+interface ResponseViewerProps {
+  form: any;
+  onBack: () => void;
+}
+
+const ResponseViewer: React.FC<ResponseViewerProps> = ({ form, onBack }) => {
+    // In a real app, this component would fetch form submissions from the backend.
+    return (
+        <div style={{ padding: "30px", maxWidth: "800px", margin: "0 auto", fontFamily: "sans-serif" }}>
+            <button
+                onClick={onBack}
+                style={{
+                    marginBottom: "20px",
+                    cursor: "pointer",
+                    border: "none",
+                    background: "transparent",
+                    color: "#007bff",
+                    fontSize: "14px",
+                }}
+            >
+                ← Back to Forms
+            </button>
+            <h2 style={{ color: "#28a745" }}>📊 Responses for: {form.title}</h2>
+            <div style={{ padding: '20px', background: '#e9f7ef', borderRadius: '8px' }}>
+                <p><strong>Status:</strong> Response viewer functionality is pending.</p>
+                <p>To view responses, the backend needs an endpoint to fetch submissions from the database (MongoDB) based on the form ID, and display them here.</p>
+                <p>This is currently a placeholder to resolve the compilation error.</p>
+            </div>
+        </div>
+    );
+};
+
+
+// -----------------------------------------------------------------------------
+// --- 4. MAIN APP COMPONENT (The original App.tsx logic) ---
+// -----------------------------------------------------------------------------
+
 function App() {
-  const [isConnected, setIsConnected] = useState(false);
+  // If the placeholder is active, we cannot reliably check for auth, so we start disconnected
+  const [isConnected, setIsConnected] = useState(false); 
   const [view, setView] = useState<"BUILDER" | "RENDERER" | "RESPONSES">(
     "BUILDER"
+  );
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(
+    isPlaceholderActive ? "Configuration Error: API_URL not set." : null
   );
 
   // --- Data State ---
@@ -42,31 +351,36 @@ function App() {
     value: "",
   });
 
-  // 1. On Mount: Check if logged in
+  // 1. On Mount: Check if logged in & fetch initial data
   useEffect(() => {
+    if (isPlaceholderActive) return;
+
     // We check for the cookie set by the backend
     if (document.cookie.includes("userId")) {
       setIsConnected(true);
+      setConnectionMessage(null);
       fetchBases();
       fetchSavedForms();
+    } else {
+      // If the URL is set but the cookie is missing (auth required)
+      setConnectionMessage("Please connect your Airtable account.");
     }
   }, []);
 
   // --- API Helpers ---
   const fetchBases = async () => {
     try {
-      // FIX: Use API_URL constant with base path
-      const res = await axios.get(`${API_URL}/api/bases`);
+      const res = await axios.get(`/api/bases`);
       setBases(res.data);
     } catch (e) {
       console.error("Error fetching bases. Token expired or API down.", e);
+      // alert("Error fetching bases. Check if your auth token is expired.");
     }
   };
 
   const fetchSavedForms = async () => {
     try {
-      // FIX: Use API_URL constant with base path
-      const res = await axios.get(`${API_URL}/api/forms`);
+      const res = await axios.get(`/api/forms`);
       setSavedForms(res.data);
     } catch (e) {
       console.error("Error fetching saved forms.", e);
@@ -84,10 +398,7 @@ function App() {
 
     if (baseId && baseId !== "-- Choose Base --") {
       try {
-        // FIX: Use API_URL constant with interpolation
-        const res = await axios.get(
-          `${API_URL}/api/bases/${baseId}/tables`
-        );
+        const res = await axios.get(`/api/bases/${baseId}/tables`);
         setTables(res.data);
       } catch (e) {
         console.error("Error fetching tables.", e);
@@ -172,32 +483,32 @@ function App() {
 
   // Save the entire form to MongoDB and register webhook
   const saveForm = async () => {
+    if (isPlaceholderActive) return alert(connectionMessage);
     if (formFields.length === 0) return;
     try {
-      // FIX: Use API_URL constant with base path
-      await axios.post(`${API_URL}/api/forms`, {
+      await axios.post(`/api/forms`, {
         baseId: selectedBase,
         tableId: selectedTable,
         title: "Conditional Form " + new Date().toLocaleTimeString(),
         fields: formFields,
       });
-      // Replace alert with custom message box in a real application
       alert("Form Saved Successfully! Webhook Registered.");
       fetchSavedForms();
     } catch (e) {
       console.error("Error saving form:", e);
-      // Replace alert with custom message box in a real application
       alert("Error saving form");
     }
   };
 
   // --- VIEW: RENDERER (The Preview Mode) ---
   if (view === "RENDERER" && activeForm) {
+    // Uses the now-defined local component
     return <FormRenderer form={activeForm} onBack={() => setView("BUILDER")} />;
   }
 
   // --- VIEW: RESPONSES (The Results Mode) ---
   if (view === "RESPONSES" && activeForm) {
+    // Uses the now-defined local component
     return (
       <ResponseViewer form={activeForm} onBack={() => setView("BUILDER")} />
     );
@@ -223,21 +534,27 @@ function App() {
         }}
       >
         <h1 style={{ margin: 0 }}>Airtable Form Builder</h1>
-        {!isConnected && (
+        {isPlaceholderActive && (
+          <div style={AppStyles.errorBanner}>
+            {connectionMessage}
+          </div>
+        )}
+        {!isConnected && !isPlaceholderActive && (
           <button
             // FINAL FIX: Pass the current Vercel domain to the backend using 'returnTo' parameter
             onClick={() => {
               const returnTo = encodeURIComponent(window.location.origin);
-              window.location.href = `${API_URL}/auth/login?returnTo=${returnTo}`;
+              // CRITICAL: Redirect is only attempted if the placeholder is inactive
+              window.location.href = `${API_URL}/auth/login?returnTo=${returnTo}`; 
             }}
-            style={styles.connectBtn}
+            style={AppStyles.connectBtn}
           >
             Connect Airtable
           </button>
         )}
       </div>
 
-      {isConnected && (
+      {isConnected && !isPlaceholderActive && (
         <div
           style={{
             display: "grid",
@@ -260,7 +577,7 @@ function App() {
             )}
 
             {savedForms.map((form) => (
-              <div key={form._id} style={styles.formCard}>
+              <div key={form._id} style={AppStyles.formCard}>
                 <strong style={{ display: "block", marginBottom: "5px" }}>
                   {form.title}
                 </strong>
@@ -271,7 +588,7 @@ function App() {
                       setActiveForm(form);
                       setView("RENDERER");
                     }}
-                    style={styles.viewBtn}
+                    style={AppStyles.viewBtn}
                   >
                     👁 View
                   </button>
@@ -281,7 +598,7 @@ function App() {
                       setView("RESPONSES");
                     }}
                     style={{
-                      ...styles.viewBtn,
+                      ...AppStyles.viewBtn,
                       borderColor: "#28a745",
                       color: "#28a745",
                     }}
@@ -315,11 +632,11 @@ function App() {
                 }}
               >
                 <div>
-                  <label style={styles.label}>Select Base</label>
+                  <label style={AppStyles.label}>Select Base</label>
                   <select
                     onChange={handleBaseChange}
                     value={selectedBase}
-                    style={styles.select}
+                    style={AppStyles.select}
                   >
                     <option value="">-- Choose Base --</option>
                     {bases.map((b) => (
@@ -330,11 +647,11 @@ function App() {
                   </select>
                 </div>
                 <div>
-                  <label style={styles.label}>Select Table</label>
+                  <label style={AppStyles.label}>Select Table</label>
                   <select
                     onChange={handleTableChange}
                     value={selectedTable}
-                    style={styles.select}
+                    style={AppStyles.select}
                     disabled={!selectedBase}
                   >
                     <option value="">-- Choose Table --</option>
@@ -367,7 +684,7 @@ function App() {
                         <div
                           key={field.id}
                           style={{
-                            ...styles.fieldRow,
+                            ...AppStyles.fieldRow,
                             background: isSelected ? "#f0f7ff" : "white",
                           }}
                         >
@@ -391,7 +708,7 @@ function App() {
                             >
                               {field.name}
                             </span>
-                            <span style={styles.typeTag}>{field.type}</span>
+                            <span style={AppStyles.typeTag}>{field.type}</span>
                           </div>
 
                           {/* Logic Button (Only shows if field is selected) */}
@@ -400,14 +717,14 @@ function App() {
                               style={{ display: "flex", alignItems: "center" }}
                             >
                               {isSelected.logic.rules.conditions.length > 0 && (
-                                <span style={styles.logicBadge}>
+                                <span style={AppStyles.logicBadge}>
                                   ⚡ {isSelected.logic.rules.conditions.length}{" "}
                                   Rules
                                 </span>
                               )}
                               <button
                                 onClick={() => setEditingFieldId(field.id)}
-                                style={styles.logicBtn}
+                                style={AppStyles.logicBtn}
                               >
                                 ⚙️ Add Logic
                               </button>
@@ -418,7 +735,7 @@ function App() {
                     })}
                   </div>
 
-                  <button onClick={saveForm} style={styles.saveBtn}>
+                  <button onClick={saveForm} style={AppStyles.saveBtn}>
                     Save Form Schema
                   </button>
                 </div>
@@ -430,17 +747,17 @@ function App() {
 
       {/* --- MODAL: Add Logic Rule --- */}
       {editingFieldId && (
-        <div style={styles.modalOverlay}>
-          <div style={styles.modal}>
+        <div style={AppStyles.modalOverlay}>
+          <div style={AppStyles.modal}>
             <h3 style={{ marginTop: 0 }}>Add Logic Rule</h3>
             <p>
               Show this question <strong>ONLY IF</strong>:
             </p>
 
             <div style={{ marginBottom: "15px" }}>
-              <label style={styles.label}>Depending on Field:</label>
+              <label style={AppStyles.label}>Depending on Field:</label>
               <select
-                style={styles.select}
+                style={AppStyles.select}
                 onChange={(e) =>
                   setLogicRule({ ...logicRule, triggerFieldId: e.target.value })
                 }
@@ -457,9 +774,9 @@ function App() {
             </div>
 
             <div style={{ marginBottom: "15px" }}>
-              <label style={styles.label}>Operator:</label>
+              <label style={AppStyles.label}>Operator:</label>
               <select
-                style={styles.select}
+                style={AppStyles.select}
                 onChange={(e) =>
                   setLogicRule({ ...logicRule, operator: e.target.value })
                 }
@@ -471,10 +788,10 @@ function App() {
             </div>
 
             <div style={{ marginBottom: "25px" }}>
-              <label style={styles.label}>Value to match:</label>
+              <label style={AppStyles.label}>Value to match:</label>
               <input
                 placeholder="e.g. Engineer"
-                style={styles.select} // reusing input style
+                style={AppStyles.select} // reusing input style
                 onChange={(e) =>
                   setLogicRule({ ...logicRule, value: e.target.value })
                 }
@@ -484,11 +801,11 @@ function App() {
             <div style={{ textAlign: "right" }}>
               <button
                 onClick={() => setEditingFieldId(null)}
-                style={styles.cancelBtn}
+                style={AppStyles.cancelBtn}
               >
                 Cancel
               </button>
-              <button onClick={saveLogic} style={styles.addRuleBtn}>
+              <button onClick={saveLogic} style={AppStyles.addRuleBtn}>
                 Add Rule
               </button>
             </div>
@@ -499,8 +816,8 @@ function App() {
   );
 }
 
-// --- Inline Styles for Simplicity ---
-const styles = {
+// --- Inline Styles for Simplicity (Renamed to AppStyles to avoid collision in FormRenderer) ---
+const AppStyles = {
   connectBtn: {
     padding: "10px 20px",
     background: "#2D7FF9",
@@ -508,6 +825,14 @@ const styles = {
     border: "none",
     borderRadius: "5px",
     cursor: "pointer",
+    fontWeight: "bold",
+  },
+  errorBanner: {
+    padding: "10px 20px",
+    background: "#ffdddd",
+    color: "#d8000c",
+    border: "1px solid #fdd",
+    borderRadius: "5px",
     fontWeight: "bold",
   },
   formCard: {
@@ -619,6 +944,29 @@ const styles = {
     borderRadius: "4px",
     cursor: "pointer",
     fontWeight: "bold",
+  },
+  // FormRenderer Styles moved here and renamed for local use
+  input: {
+    width: "100%",
+    padding: "10px",
+    fontSize: "15px",
+    border: "1px solid #ccc",
+    borderRadius: "4px",
+    boxSizing: "border-box" as const,
+    outline: "none",
+    transition: "border 0.2s",
+  },
+  submitBtn: {
+    width: "100%",
+    padding: "12px",
+    backgroundColor: "#28a745",
+    color: "white",
+    border: "none",
+    borderRadius: "5px",
+    fontSize: "16px",
+    fontWeight: "bold",
+    marginTop: "15px",
+    transition: "background-color 0.2s",
   },
 };
 
