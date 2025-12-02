@@ -1,14 +1,13 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
+
 // The FormRenderer and ResponseViewer components are now defined later in this file
 // to resolve the 'Could not resolve' import errors.
 
-// --- GLOBAL CONFIGURATION ---
-// !!! IMPORTANT: YOU MUST REPLACE THIS PLACEHOLDER WITH YOUR ACTUAL RENDER BACKEND URL (e.g., https://your-backend-name.onrender.com) !!!
-// --- FIX APPLIED HERE ---
-const API_URL_PLACEHOLDER = 'YOUR_RENDER_BACKEND_URL_HERE';
-const API_URL = 'https://conditional-form-backend.onrender.com'; // <--- **REPLACED WITH YOUR LIVE RENDER URL**
-const isPlaceholderActive = API_URL === API_URL_PLACEHOLDER;
+// --- GLOBAL CONFIGURATION (FIXED) ---
+// !!! IMPORTANT: THIS MUST BE YOUR ACTUAL RENDER BACKEND URL !!!
+const API_URL = 'https://conditional-form-backend.onrender.com'; // <--- **YOUR LIVE RENDER URL HERE**
+const isPlaceholderActive = false; // We hardcoded the URL, so the placeholder check is removed.
 
 if (!isPlaceholderActive) {
     axios.defaults.withCredentials = true;
@@ -25,8 +24,6 @@ const ALLOWED_TYPES = [
 
 // -----------------------------------------------------------------------------
 // --- 1. LOGIC ENGINE (Moved to the main file) ---
-// Note: This logic engine code should ideally come from logicengine.ts, 
-// but is integrated here to ensure the FormRenderer compiles without dependency errors.
 // -----------------------------------------------------------------------------
 
 export type Operator = "equals" | "notEquals" | "contains";
@@ -107,8 +104,8 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, onBack }) => {
   };
 
   const handleSubmit = async () => {
-    // Check if the global baseURL is likely a placeholder before submitting
-    if (axios.defaults.baseURL === API_URL_PLACEHOLDER) {
+    // We can no longer check against API_URL_PLACEHOLDER, so we use the boolean flag
+    if (isPlaceholderActive) {
         alert("Configuration Error: Please set the actual API_URL in App.tsx before submitting.");
         return;
     }
@@ -282,7 +279,6 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, onBack }) => {
 
 // -----------------------------------------------------------------------------
 // --- 3. RESPONSE VIEWER (Placeholder) ---
-// This was missing from the provided code.
 // -----------------------------------------------------------------------------
 
 interface ResponseViewerProps {
