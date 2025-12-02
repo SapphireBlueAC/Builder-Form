@@ -5,8 +5,9 @@ import axios from "axios";
 
 // --- GLOBAL CONFIGURATION ---
 // !!! IMPORTANT: YOU MUST REPLACE THIS PLACEHOLDER WITH YOUR ACTUAL RENDER BACKEND URL (e.g., https://your-backend-name.onrender.com) !!!
+// --- FIX APPLIED HERE ---
 const API_URL_PLACEHOLDER = 'YOUR_RENDER_BACKEND_URL_HERE';
-const API_URL = API_URL_PLACEHOLDER; 
+const API_URL = 'https://conditional-form-backend.onrender.com'; // <--- **REPLACED WITH YOUR LIVE RENDER URL**
 const isPlaceholderActive = API_URL === API_URL_PLACEHOLDER;
 
 if (!isPlaceholderActive) {
