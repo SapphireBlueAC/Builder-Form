@@ -1,20 +1,17 @@
 import React, { useEffect, useState } from "react";
 import axios from "axios";
 
-// The FormRenderer and ResponseViewer components are now defined later in this file
-// to resolve the 'Could not resolve' import errors.
-
-// --- GLOBAL CONFIGURATION (FIXED) ---
+// --- GLOBAL CONFIGURATION ---
 // !!! IMPORTANT: THIS IS SET TO THE URL FOUND IN YOUR RENDER LOGS !!!
-const API_URL = 'https://builder-form.onrender.com'; // <--- **CORRECTED LIVE RENDER URL**
-const isPlaceholderActive = false; // The URL is set, so the placeholder check is removed.
+const API_URL = "https://builder-form.onrender.com"; // <--- **YOUR LIVE RENDER URL**
+const isPlaceholderActive = false;
 
 if (!isPlaceholderActive) {
-    axios.defaults.withCredentials = true;
-    axios.defaults.baseURL = API_URL;
+  axios.defaults.withCredentials = true; // This ensures cookies are sent with every request
+  axios.defaults.baseURL = API_URL;
 }
 
-// Only allow these Airtable field types to keep things simple
+// Only allow these Airtable field types
 const ALLOWED_TYPES = [
   "singleLineText",
   "multilineText",
@@ -23,13 +20,13 @@ const ALLOWED_TYPES = [
 ];
 
 // -----------------------------------------------------------------------------
-// --- 1. LOGIC ENGINE (Moved to the main file) ---
+// --- 1. LOGIC ENGINE ---
 // -----------------------------------------------------------------------------
 
 export type Operator = "equals" | "notEquals" | "contains";
 
 export interface Condition {
-  questionKey: string; // The ID of the field we are checking
+  questionKey: string;
   operator: Operator;
   value: any;
 }
@@ -43,50 +40,32 @@ export function shouldShowQuestion(
   rules: ConditionalRules | null | undefined,
   answersSoFar: Record<string, any>
 ): boolean {
-  // 1. If no rules exist, always show the question
-  if (!rules || !rules.conditions || rules.conditions.length === 0) {
-    return true;
-  }
+  if (!rules || !rules.conditions || rules.conditions.length === 0) return true;
 
-  // 2. Evaluate every condition
   const results = rules.conditions.map((condition) => {
     const userAnswer = answersSoFar[condition.questionKey];
-
-    // If the user hasn't answered the dependency yet, it's a mismatch
     if (userAnswer === undefined || userAnswer === null) return false;
 
     switch (condition.operator) {
       case "equals":
-        // usage: answers['role'] === 'Engineer'
         return String(userAnswer) === String(condition.value);
-
       case "notEquals":
         return String(userAnswer) !== String(condition.value);
-
       case "contains":
-        // Handle arrays (Multi-select) or Strings
-        if (Array.isArray(userAnswer)) {
+        if (Array.isArray(userAnswer))
           return userAnswer.includes(condition.value);
-        }
         return String(userAnswer).includes(condition.value);
-
       default:
         return false;
     }
   });
 
-  // 3. Combine results based on AND / OR
-  if (rules.logic === "AND") {
-    return results.every((res) => res === true);
-  } else {
-    // OR logic
-    return results.some((res) => res === true);
-  }
+  if (rules.logic === "AND") return results.every((res) => res === true);
+  else return results.some((res) => res === true);
 }
 
 // -----------------------------------------------------------------------------
-// --- 2. FORM RENDERER (Moved to the main file) ---
-// Based on the content of FormRenderer.tsx
+// --- 2. FORM RENDERER ---
 // -----------------------------------------------------------------------------
 
 interface FormRendererProps {
@@ -98,116 +77,60 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, onBack }) => {
   const [answers, setAnswers] = useState<Record<string, any>>({});
   const [isSubmitting, setIsSubmitting] = useState(false);
 
-  // Update state when user types/selects
   const handleChange = (fieldId: string, value: any) => {
     setAnswers((prev) => ({ ...prev, [fieldId]: value }));
   };
 
   const handleSubmit = async () => {
-    // We use the flag now that we've removed the string comparison.
-    if (isPlaceholderActive) {
-        // NOTE: We replace alert() with a modal/message box in production-grade code.
-        alert("Configuration Error: Please set the actual API_URL in App.tsx before submitting.");
-        return;
-    }
-      
-    // 1. VALIDATION
+    if (isPlaceholderActive)
+      return alert("Configuration Error: API_URL not set.");
+
+    // VALIDATION
     const missingFields = form.fields.filter((field: any) => {
       const isVisible = shouldShowQuestion(field.logic?.rules, answers);
       return isVisible && field.required && !answers[field.fieldId];
     });
 
     if (missingFields.length > 0) {
-      alert(`Please fill in the following required fields: ${missingFields.map((f: any) => f.label).join(", ")}`);
+      alert(
+        `Please fill in required fields: ${missingFields
+          .map((f: any) => f.label)
+          .join(", ")}`
+      );
       return;
     }
 
     setIsSubmitting(true);
 
     try {
-      console.log("📤 Submitting form...", answers);
-
-      // 2. SUBMIT TO SERVER
-      await axios.post(
-        `/api/forms/${form._id}/submit`,
-        answers
-      );
-
-      alert("✅ Success! Response saved to Airtable & Database.");
-      onBack(); // Return to main list
+      await axios.post(`/api/forms/${form._id}/submit`, answers);
+      alert("✅ Success! Response saved.");
+      onBack();
     } catch (error: any) {
-      console.error("❌ Submission Error:", error);
-      const msg =
-        error.response?.data?.error || error.message || "Unknown error";
-      alert(`Failed to submit: ${msg}`);
+      console.error("Submission Error:", error);
+      alert(`Failed to submit: ${error.message}`);
     } finally {
       setIsSubmitting(false);
     }
   };
 
   return (
-    <div
-      style={{
-        padding: "30px",
-        maxWidth: "600px",
-        margin: "0 auto",
-        border: "1px solid #e0e0e0",
-        borderRadius: "8px",
-        background: "#fff",
-        fontFamily: "sans-serif",
-        boxShadow: "0 2px 5px rgba(0,0,0,0.05)",
-      }}
-    >
-      <button
-        onClick={onBack}
-        style={{
-          marginBottom: "20px",
-          cursor: "pointer",
-          border: "none",
-          background: "transparent",
-          color: "#007bff",
-          fontSize: "14px",
-        }}
-      >
+    <div style={AppStyles.rendererContainer}>
+      <button onClick={onBack} style={AppStyles.backBtn}>
         ← Back to Forms
       </button>
-
-      <h2
-        style={{
-          marginTop: 0,
-          marginBottom: "20px",
-          borderBottom: "1px solid #f0f0f0",
-          paddingBottom: "15px",
-        }}
-      >
-        {form.title}
-      </h2>
-
+      <h2 style={AppStyles.header}>{form.title}</h2>
       <form onSubmit={(e) => e.preventDefault()}>
         {form.fields.map((field: any) => {
-          // --- LOGIC ENGINE CHECK ---
           const isVisible = shouldShowQuestion(field.logic?.rules, answers);
-
-          if (!isVisible) return null; // Hide completely if logic says so
-          // --------------------------
+          if (!isVisible) return null;
 
           return (
             <div key={field.fieldId} style={{ marginBottom: "20px" }}>
-              <label
-                style={{
-                  display: "block",
-                  fontWeight: "600",
-                  marginBottom: "8px",
-                  color: "#333",
-                }}
-              >
+              <label style={AppStyles.label}>
                 {field.label}{" "}
-                {field.required && (
-                  <span style={{ color: "red", marginLeft: "2px" }}>*</span>
-                )}
+                {field.required && <span style={{ color: "red" }}>*</span>}
               </label>
-
-              {/* Render Inputs based on Airtable Type */}
 
               {(field.type === "singleLineText" ||
                 field.type === "multilineText") && (
@@ -228,7 +151,7 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, onBack }) => {
                   onChange={(e) => handleChange(field.fieldId, e.target.value)}
                   disabled={isSubmitting}
                 >
-                  <option value="">-- Select an option --</option>
+                  <option value="">-- Select --</option>
                   {field.options &&
                     field.options.map((opt: string) => (
                       <option key={opt} value={opt}>
@@ -237,47 +160,23 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, onBack }) => {
                     ))}
                 </select>
               )}
-
-              {/* Fallback for others */}
-              {!["singleLineText", "multilineText", "singleSelect"].includes(
-                field.type
-              ) && (
-                <div
-                  style={{
-                    padding: "10px",
-                    background: "#fff3cd",
-                    color: "#856404",
-                    borderRadius: "4px",
-                    fontSize: "13px",
-                  }}
-                >
-                  Input type <strong>{field.type}</strong> is not fully
-                  supported in this preview.
-                </div>
-              )}
             </div>
           );
         })}
-
         <button
           onClick={handleSubmit}
           disabled={isSubmitting}
-          style={{
-            ...AppStyles.submitBtn,
-            opacity: isSubmitting ? 0.7 : 1,
-            cursor: isSubmitting ? "not-allowed" : "pointer",
-          }}
+          style={AppStyles.submitBtn}
         >
-          {isSubmitting ? "Sending to Airtable..." : "Submit Form"}
+          {isSubmitting ? "Sending..." : "Submit Form"}
         </button>
       </form>
     </div>
   );
 };
 
-
 // -----------------------------------------------------------------------------
-// --- 3. RESPONSE VIEWER (Placeholder) ---
+// --- 3. RESPONSE VIEWER ---
 // -----------------------------------------------------------------------------
 
 interface ResponseViewerProps {
@@ -286,61 +185,52 @@ interface ResponseViewerProps {
 }
 
 const ResponseViewer: React.FC<ResponseViewerProps> = ({ form, onBack }) => {
-    // In a real app, this component would fetch form submissions from the backend.
-    return (
-        <div style={{ padding: "30px", maxWidth: "800px", margin: "0 auto", fontFamily: "sans-serif" }}>
-            <button
-                onClick={onBack}
-                style={{
-                    marginBottom: "20px",
-                    cursor: "pointer",
-                    border: "none",
-                    background: "transparent",
-                    color: "#007bff",
-                    fontSize: "14px",
-                }}
-            >
-                ← Back to Forms
-            </button>
-            <h2 style={{ color: "#28a745" }}>📊 Responses for: {form.title}</h2>
-            <div style={{ padding: '20px', background: '#e9f7ef', borderRadius: '8px' }}>
-                <p><strong>Status:</strong> Response viewer functionality is pending.</p>
-                <p>To view responses, the backend needs an endpoint to fetch submissions from the database (MongoDB) based on the form ID, and display them here.</p>
-                <p>This is currently a placeholder to resolve the compilation error.</p>
-            </div>
-        </div>
-    );
+  return (
+    <div style={AppStyles.rendererContainer}>
+      <button onClick={onBack} style={AppStyles.backBtn}>
+        ← Back
+      </button>
+      <h2 style={{ color: "#28a745" }}>📊 Responses for: {form.title}</h2>
+      <div
+        style={{ padding: "20px", background: "#e9f7ef", borderRadius: "8px" }}
+      >
+        <p>
+          To view responses, ensure your backend implements the response
+          fetching endpoint.
+        </p>
+      </div>
+    </div>
+  );
 };
 
-
 // -----------------------------------------------------------------------------
-// --- 4. MAIN APP COMPONENT (The original App.tsx logic) ---
+// --- 4. MAIN APP COMPONENT ---
 // -----------------------------------------------------------------------------
 
 function App() {
-  // If the placeholder is active, we cannot reliably check for auth, so we start disconnected
-  const [isConnected, setIsConnected] = useState(false); 
+  const [isConnected, setIsConnected] = useState(false);
   const [view, setView] = useState<"BUILDER" | "RENDERER" | "RESPONSES">(
     "BUILDER"
   );
-  // The error message is now conditional based on the isPlaceholderActive flag
   const [connectionMessage, setConnectionMessage] = useState<string | null>(
-    isPlaceholderActive ? "Configuration Error: API_URL not set." : null
+    isPlaceholderActive
+      ? "Configuration Error: API_URL not set."
+      : "Checking connection..."
   );
 
-  // --- Data State ---
+  // Data State
   const [bases, setBases] = useState<any[]>([]);
   const [tables, setTables] = useState<any[]>([]);
   const [savedForms, setSavedForms] = useState<any[]>([]);
   const [activeForm, setActiveForm] = useState<any>(null);
 
-  // --- Builder State (Selection) ---
+  // Builder State
   const [selectedBase, setSelectedBase] = useState("");
   const [selectedTable, setSelectedTable] = useState("");
   const [tableFields, setTableFields] = useState<any[]>([]);
   const [formFields, setFormFields] = useState<any[]>([]);
 
-  // --- Logic Modal State ---
+  // Logic Modal State
   const [editingFieldId, setEditingFieldId] = useState<string | null>(null);
   const [logicRule, setLogicRule] = useState({
     triggerFieldId: "",
@@ -348,30 +238,40 @@ function App() {
     value: "",
   });
 
-  // 1. On Mount: Check if logged in & fetch initial data
+  // --- AUTH CHECK: The Critical Fix ---
   useEffect(() => {
     if (isPlaceholderActive) return;
-
-    // We check for the cookie set by the backend
-    if (document.cookie.includes("userId")) {
-      setIsConnected(true);
-      setConnectionMessage(null);
-      fetchBases();
-      fetchSavedForms();
-    } else {
-      // If the URL is set but the cookie is missing (auth required)
-      setConnectionMessage("Please connect your Airtable account.");
-    }
+    verifyConnection();
   }, []);
 
-  // --- API Helpers ---
+  const verifyConnection = async () => {
+    try {
+      // Instead of checking local cookies, we TRY to fetch data from the backend.
+      // Because 'withCredentials' is true, the cookie travels to Render.
+      // If Render accepts it, we are logged in.
+      await axios.get("/api/forms");
+
+      // If the above line didn't throw an error, we are connected!
+      setIsConnected(true);
+      setConnectionMessage(null);
+
+      // Now fetch the rest of the data
+      fetchBases();
+      fetchSavedForms();
+    } catch (e) {
+      // If we get a 401 error, it means we aren't logged in.
+      console.log("Not connected yet.");
+      setIsConnected(false);
+      setConnectionMessage("Please connect your Airtable account.");
+    }
+  };
+
   const fetchBases = async () => {
     try {
       const res = await axios.get(`/api/bases`);
       setBases(res.data);
     } catch (e) {
-      console.error("Error fetching bases. Token expired or API down.", e);
-      // alert("Error fetching bases. Check if your auth token is expired.");
+      console.error("Error fetching bases", e);
     }
   };
 
@@ -380,54 +280,45 @@ function App() {
       const res = await axios.get(`/api/forms`);
       setSavedForms(res.data);
     } catch (e) {
-      console.error("Error fetching saved forms.", e);
+      console.error("Error fetching forms", e);
     }
   };
 
-  // --- Event Handlers ---
+  // --- Handlers ---
 
-  // When User Selects a Base -> Fetch Tables
   const handleBaseChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const baseId = e.target.value;
     setSelectedBase(baseId);
     setTables([]);
     setSelectedTable("");
-
-    if (baseId && baseId !== "-- Choose Base --") {
+    if (baseId) {
       try {
         const res = await axios.get(`/api/bases/${baseId}/tables`);
         setTables(res.data);
       } catch (e) {
-        console.error("Error fetching tables.", e);
+        console.error(e);
       }
     }
   };
 
-  // When User Selects a Table -> Fetch Fields
   const handleTableChange = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const tableId = e.target.value;
     setSelectedTable(tableId);
-
     const table = tables.find((t) => t.id === tableId);
     if (table) {
-      // Filter out unsupported types (like Rollups, Formulas, Lookup)
       const supported = table.fields.filter((f: any) =>
         ALLOWED_TYPES.includes(f.type)
       );
       setTableFields(supported);
-      setFormFields([]); // Reset current selection when table changes
+      setFormFields([]);
     }
   };
 
-  // Toggle Field Selection (Check/Uncheck)
   const toggleField = (field: any) => {
     const exists = formFields.find((f) => f.fieldId === field.id);
-
     if (exists) {
-      // Remove field
       setFormFields(formFields.filter((f) => f.fieldId !== field.id));
     } else {
-      // Add field with default structure (empty logic)
       setFormFields([
         ...formFields,
         {
@@ -444,11 +335,8 @@ function App() {
     }
   };
 
-  // Save a new Logic Rule to the 'editingFieldId'
   const saveLogic = () => {
     if (!editingFieldId) return;
-
-    // Update the specific field in our state with the new rule
     setFormFields((prev) =>
       prev.map((f) => {
         if (f.fieldId === editingFieldId) {
@@ -473,14 +361,11 @@ function App() {
         return f;
       })
     );
-    setEditingFieldId(null); // Close modal
-    // Reset logic rule state
+    setEditingFieldId(null);
     setLogicRule({ triggerFieldId: "", operator: "equals", value: "" });
   };
 
-  // Save the entire form to MongoDB and register webhook
   const saveForm = async () => {
-    if (isPlaceholderActive) return alert(connectionMessage);
     if (formFields.length === 0) return;
     try {
       await axios.post(`/api/forms`, {
@@ -489,96 +374,62 @@ function App() {
         title: "Conditional Form " + new Date().toLocaleTimeString(),
         fields: formFields,
       });
-      alert("Form Saved Successfully! Webhook Registered.");
+      alert("Form Saved Successfully!");
       fetchSavedForms();
     } catch (e) {
-      console.error("Error saving form:", e);
       alert("Error saving form");
     }
   };
 
-  // --- VIEW: RENDERER (The Preview Mode) ---
-  if (view === "RENDERER" && activeForm) {
-    // Uses the now-defined local component
+  if (view === "RENDERER" && activeForm)
     return <FormRenderer form={activeForm} onBack={() => setView("BUILDER")} />;
-  }
-
-  // --- VIEW: RESPONSES (The Results Mode) ---
-  if (view === "RESPONSES" && activeForm) {
-    // Uses the now-defined local component
+  if (view === "RESPONSES" && activeForm)
     return (
       <ResponseViewer form={activeForm} onBack={() => setView("BUILDER")} />
     );
-  }
 
-  // --- VIEW: BUILDER (The Main UI) ---
   return (
-    <div
-      style={{
-        maxWidth: "1000px",
-        margin: "20px auto",
-        fontFamily: "sans-serif",
-        padding: "20px",
-      }}
-    >
-      {/* Header */}
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          alignItems: "center",
-          marginBottom: "20px",
-        }}
-      >
+    <div style={AppStyles.container}>
+      <div style={AppStyles.topBar}>
         <h1 style={{ margin: 0 }}>Airtable Form Builder</h1>
-        {isPlaceholderActive && (
-          <div style={AppStyles.errorBanner}>
-            {connectionMessage}
+
+        {!isConnected && (
+          <div style={{ display: "flex", alignItems: "center", gap: "15px" }}>
+            <span style={{ color: "#666" }}>{connectionMessage}</span>
+            {!isPlaceholderActive && (
+              <button
+                onClick={() => {
+                  const returnTo = encodeURIComponent(window.location.origin);
+                  window.location.href = `${API_URL}/auth/login?returnTo=${returnTo}`;
+                }}
+                style={AppStyles.connectBtn}
+              >
+                Connect Airtable
+              </button>
+            )}
           </div>
         )}
-        {!isConnected && !isPlaceholderActive && (
-          <button
-            // FINAL FIX: Pass the current Vercel domain to the backend using 'returnTo' parameter
-            onClick={() => {
-              const returnTo = encodeURIComponent(window.location.origin);
-              // CRITICAL: Redirect is only attempted if the placeholder is inactive
-              window.location.href = `${API_URL}/auth/login?returnTo=${returnTo}`; 
-            }}
-            style={AppStyles.connectBtn}
-          >
-            Connect Airtable
-          </button>
+
+        {isConnected && (
+          <span style={{ color: "green", fontWeight: "bold" }}>
+            ● Connected
+          </span>
         )}
       </div>
 
-      {isConnected && !isPlaceholderActive && (
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 3fr",
-            gap: "30px",
-          }}
-        >
-          {/* LEFT SIDEBAR: Saved Forms List */}
-          <div
-            style={{
-              background: "#f8f9fa",
-              padding: "15px",
-              borderRadius: "8px",
-              height: "fit-content",
-            }}
-          >
+      {isConnected && (
+        <div style={AppStyles.mainGrid}>
+          {/* LEFT SIDEBAR */}
+          <div style={AppStyles.sidebar}>
             <h3 style={{ marginTop: 0 }}>📂 Your Forms</h3>
             {savedForms.length === 0 && (
               <p style={{ color: "#666" }}>No forms yet.</p>
             )}
-
             {savedForms.map((form) => (
               <div key={form._id} style={AppStyles.formCard}>
                 <strong style={{ display: "block", marginBottom: "5px" }}>
                   {form.title}
                 </strong>
-
                 <div style={{ display: "flex", gap: "10px" }}>
                   <button
                     onClick={() => {
@@ -596,8 +447,8 @@ function App() {
                     }}
                     style={{
                       ...AppStyles.viewBtn,
-                      borderColor: "#28a745",
                       color: "#28a745",
+                      borderColor: "#28a745",
                     }}
                   >
                     📊 Results
@@ -607,150 +458,110 @@ function App() {
             ))}
           </div>
 
-          {/* MAIN AREA: Form Creator */}
-          <div>
+          {/* MAIN CREATOR */}
+          <div style={AppStyles.creatorBox}>
+            <h2 style={{ marginTop: 0 }}>🛠 Create New Form</h2>
             <div
               style={{
-                padding: "25px",
-                border: "1px solid #e0e0e0",
-                borderRadius: "8px",
-                background: "white",
+                display: "grid",
+                gridTemplateColumns: "1fr 1fr",
+                gap: "15px",
+                marginBottom: "20px",
               }}
             >
-              <h2 style={{ marginTop: 0 }}>🛠 Create New Form</h2>
-
-              {/* Selectors */}
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: "15px",
-                  marginBottom: "20px",
-                }}
-              >
-                <div>
-                  <label style={AppStyles.label}>Select Base</label>
-                  <select
-                    onChange={handleBaseChange}
-                    value={selectedBase}
-                    style={AppStyles.select}
-                  >
-                    <option value="">-- Choose Base --</option>
-                    {bases.map((b) => (
-                      <option key={b.id} value={b.id}>
-                        {b.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label style={AppStyles.label}>Select Table</label>
-                  <select
-                    onChange={handleTableChange}
-                    value={selectedTable}
-                    style={AppStyles.select}
-                    disabled={!selectedBase}
-                  >
-                    <option value="">-- Choose Table --</option>
-                    {tables.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        {t.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+              <div>
+                <label style={AppStyles.label}>Select Base</label>
+                <select
+                  onChange={handleBaseChange}
+                  value={selectedBase}
+                  style={AppStyles.select}
+                >
+                  <option value="">-- Choose Base --</option>
+                  {bases.map((b) => (
+                    <option key={b.id} value={b.id}>
+                      {b.name}
+                    </option>
+                  ))}
+                </select>
               </div>
-
-              {/* Field List */}
-              {tableFields.length > 0 && (
-                <div>
-                  <h3>Select Fields to Include:</h3>
-                  <div
-                    style={{
-                      border: "1px solid #eee",
-                      borderRadius: "4px",
-                      maxHeight: "500px",
-                      overflowY: "auto",
-                    }}
-                  >
-                    {tableFields.map((field) => {
-                      const isSelected = formFields.find(
-                        (f) => f.fieldId === field.id
-                      );
-                      return (
-                        <div
-                          key={field.id}
-                          style={{
-                            ...AppStyles.fieldRow,
-                            background: isSelected ? "#f0f7ff" : "white",
-                          }}
-                        >
-                          <div
-                            style={{ display: "flex", alignItems: "center" }}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={!!isSelected}
-                              onChange={() => toggleField(field)}
-                              style={{
-                                transform: "scale(1.2)",
-                                marginRight: "10px",
-                                cursor: "pointer",
-                              }}
-                            />
-                            <span
-                              style={{
-                                fontWeight: isSelected ? "bold" : "normal",
-                              }}
-                            >
-                              {field.name}
-                            </span>
-                            <span style={AppStyles.typeTag}>{field.type}</span>
-                          </div>
-
-                          {/* Logic Button (Only shows if field is selected) */}
-                          {isSelected && (
-                            <div
-                              style={{ display: "flex", alignItems: "center" }}
-                            >
-                              {isSelected.logic.rules.conditions.length > 0 && (
-                                <span style={AppStyles.logicBadge}>
-                                  ⚡ {isSelected.logic.rules.conditions.length}{" "}
-                                  Rules
-                                </span>
-                              )}
-                              <button
-                                onClick={() => setEditingFieldId(field.id)}
-                                style={AppStyles.logicBtn}
-                              >
-                                ⚙️ Add Logic
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <button onClick={saveForm} style={AppStyles.saveBtn}>
-                    Save Form Schema
-                  </button>
-                </div>
-              )}
+              <div>
+                <label style={AppStyles.label}>Select Table</label>
+                <select
+                  onChange={handleTableChange}
+                  value={selectedTable}
+                  style={AppStyles.select}
+                  disabled={!selectedBase}
+                >
+                  <option value="">-- Choose Table --</option>
+                  {tables.map((t) => (
+                    <option key={t.id} value={t.id}>
+                      {t.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
+
+            {tableFields.length > 0 && (
+              <div>
+                <h3>Select Fields:</h3>
+                <div style={AppStyles.fieldList}>
+                  {tableFields.map((field) => {
+                    const isSelected = formFields.find(
+                      (f) => f.fieldId === field.id
+                    );
+                    return (
+                      <div
+                        key={field.id}
+                        style={{
+                          ...AppStyles.fieldRow,
+                          background: isSelected ? "#f0f7ff" : "white",
+                        }}
+                      >
+                        <div style={{ display: "flex", alignItems: "center" }}>
+                          <input
+                            type="checkbox"
+                            checked={!!isSelected}
+                            onChange={() => toggleField(field)}
+                            style={{ marginRight: "10px" }}
+                          />
+                          <span
+                            style={{
+                              fontWeight: isSelected ? "bold" : "normal",
+                            }}
+                          >
+                            {field.name}
+                          </span>
+                          <span style={AppStyles.typeTag}>{field.type}</span>
+                        </div>
+                        {isSelected && (
+                          <button
+                            onClick={() => setEditingFieldId(field.id)}
+                            style={AppStyles.logicBtn}
+                          >
+                            {isSelected.logic.rules.conditions.length > 0
+                              ? "⚡ Rules"
+                              : "⚙️ Logic"}
+                          </button>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+                <button onClick={saveForm} style={AppStyles.saveBtn}>
+                  Save Form Schema
+                </button>
+              </div>
+            )}
           </div>
         </div>
       )}
 
-      {/* --- MODAL: Add Logic Rule --- */}
+      {/* MODAL */}
       {editingFieldId && (
         <div style={AppStyles.modalOverlay}>
           <div style={AppStyles.modal}>
-            <h3 style={{ marginTop: 0 }}>Add Logic Rule</h3>
-            <p>
-              Show this question <strong>ONLY IF</strong>:
-            </p>
-
+            <h3>Add Logic Rule</h3>
             <div style={{ marginBottom: "15px" }}>
               <label style={AppStyles.label}>Depending on Field:</label>
               <select
@@ -759,7 +570,7 @@ function App() {
                   setLogicRule({ ...logicRule, triggerFieldId: e.target.value })
                 }
               >
-                <option value="">-- Select Field --</option>
+                <option value="">-- Select --</option>
                 {formFields
                   .filter((f) => f.fieldId !== editingFieldId)
                   .map((f) => (
@@ -769,7 +580,6 @@ function App() {
                   ))}
               </select>
             </div>
-
             <div style={{ marginBottom: "15px" }}>
               <label style={AppStyles.label}>Operator:</label>
               <select
@@ -778,23 +588,20 @@ function App() {
                   setLogicRule({ ...logicRule, operator: e.target.value })
                 }
               >
-                <option value="equals">Equals (=)</option>
-                <option value="notEquals">Does Not Equal (!=)</option>
-                <option value="contains">Contains (for Multi-select)</option>
+                <option value="equals">Equals</option>
+                <option value="notEquals">Does Not Equal</option>
+                <option value="contains">Contains</option>
               </select>
             </div>
-
             <div style={{ marginBottom: "25px" }}>
-              <label style={AppStyles.label}>Value to match:</label>
+              <label style={AppStyles.label}>Value:</label>
               <input
-                placeholder="e.g. Engineer"
-                style={AppStyles.select} // reusing input style
+                style={AppStyles.select}
                 onChange={(e) =>
                   setLogicRule({ ...logicRule, value: e.target.value })
                 }
               />
             </div>
-
             <div style={{ textAlign: "right" }}>
               <button
                 onClick={() => setEditingFieldId(null)}
@@ -813,8 +620,41 @@ function App() {
   );
 }
 
-// --- Inline Styles for Simplicity (Renamed to AppStyles to avoid collision in FormRenderer) ---
 const AppStyles = {
+  container: {
+    maxWidth: "1000px",
+    margin: "20px auto",
+    fontFamily: "sans-serif",
+    padding: "20px",
+  },
+  topBar: {
+    display: "flex",
+    justifyContent: "space-between",
+    alignItems: "center",
+    marginBottom: "20px",
+  },
+  mainGrid: { display: "grid", gridTemplateColumns: "1fr 3fr", gap: "30px" },
+  sidebar: {
+    background: "#f8f9fa",
+    padding: "15px",
+    borderRadius: "8px",
+    height: "fit-content",
+  },
+  creatorBox: {
+    padding: "25px",
+    border: "1px solid #e0e0e0",
+    borderRadius: "8px",
+    background: "white",
+  },
+  rendererContainer: {
+    padding: "30px",
+    maxWidth: "600px",
+    margin: "0 auto",
+    border: "1px solid #e0e0e0",
+    borderRadius: "8px",
+    background: "#fff",
+    fontFamily: "sans-serif",
+  },
   connectBtn: {
     padding: "10px 20px",
     background: "#2D7FF9",
@@ -824,21 +664,12 @@ const AppStyles = {
     cursor: "pointer",
     fontWeight: "bold",
   },
-  errorBanner: {
-    padding: "10px 20px",
-    background: "#ffdddd",
-    color: "#d8000c",
-    border: "1px solid #fdd",
-    borderRadius: "5px",
-    fontWeight: "bold",
-  },
   formCard: {
     padding: "15px",
     background: "white",
     marginBottom: "10px",
     borderRadius: "6px",
     border: "1px solid #ddd",
-    boxShadow: "0 2px 4px rgba(0,0,0,0.05)",
   },
   viewBtn: {
     flex: 1,
@@ -853,7 +684,6 @@ const AppStyles = {
   select: {
     width: "100%",
     padding: "10px",
-    fontSize: "14px",
     borderRadius: "4px",
     border: "1px solid #ccc",
     boxSizing: "border-box" as const,
@@ -861,21 +691,25 @@ const AppStyles = {
   label: {
     display: "block",
     marginBottom: "5px",
-    fontSize: "14px",
     fontWeight: "600",
     color: "#555",
   },
   saveBtn: {
-    padding: "12px 20px",
+    padding: "12px",
     background: "#28a745",
     color: "white",
     border: "none",
     borderRadius: "5px",
     cursor: "pointer",
-    fontSize: "16px",
-    fontWeight: "bold",
     width: "100%",
     marginTop: "20px",
+    fontWeight: "bold",
+  },
+  fieldList: {
+    border: "1px solid #eee",
+    borderRadius: "4px",
+    maxHeight: "500px",
+    overflowY: "auto" as const,
   },
   fieldRow: {
     padding: "12px",
@@ -891,12 +725,6 @@ const AppStyles = {
     background: "#eee",
     padding: "2px 6px",
     borderRadius: "4px",
-  },
-  logicBadge: {
-    fontSize: "12px",
-    color: "#d35400",
-    marginRight: "10px",
-    fontWeight: "bold",
   },
   logicBtn: {
     padding: "5px 10px",
@@ -942,16 +770,25 @@ const AppStyles = {
     cursor: "pointer",
     fontWeight: "bold",
   },
-  // FormRenderer Styles moved here and renamed for local use
+  header: {
+    marginTop: 0,
+    marginBottom: "20px",
+    borderBottom: "1px solid #f0f0f0",
+    paddingBottom: "15px",
+  },
+  backBtn: {
+    marginBottom: "20px",
+    cursor: "pointer",
+    border: "none",
+    background: "transparent",
+    color: "#007bff",
+  },
   input: {
     width: "100%",
     padding: "10px",
-    fontSize: "15px",
     border: "1px solid #ccc",
     borderRadius: "4px",
     boxSizing: "border-box" as const,
-    outline: "none",
-    transition: "border 0.2s",
   },
   submitBtn: {
     width: "100%",
@@ -960,10 +797,8 @@ const AppStyles = {
     color: "white",
     border: "none",
     borderRadius: "5px",
-    fontSize: "16px",
     fontWeight: "bold",
     marginTop: "15px",
-    transition: "background-color 0.2s",
   },
 };
 
