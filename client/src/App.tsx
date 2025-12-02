@@ -6,10 +6,18 @@ import axios from "axios";
 const API_URL = "https://builder-form.onrender.com"; // <--- **YOUR LIVE RENDER URL**
 const isPlaceholderActive = false;
 
-if (!isPlaceholderActive) {
-  axios.defaults.withCredentials = true; // This ensures cookies are sent with every request
-  axios.defaults.baseURL = API_URL;
-}
+// 1. Set Base URL
+axios.defaults.baseURL = API_URL;
+
+// 2. TOKEN INTERCEPTOR (Crucial Step for Token Auth)
+// This automatically adds the token to every request if it exists in localStorage
+axios.interceptors.request.use((config) => {
+  const token = localStorage.getItem("authToken");
+  if (token) {
+    config.headers.Authorization = `Bearer ${token}`;
+  }
+  return config;
+});
 
 // Only allow these Airtable field types
 const ALLOWED_TYPES = [
@@ -82,9 +90,6 @@ const FormRenderer: React.FC<FormRendererProps> = ({ form, onBack }) => {
   };
 
   const handleSubmit = async () => {
-    if (isPlaceholderActive)
-      return alert("Configuration Error: API_URL not set.");
-
     // VALIDATION
     const missingFields = form.fields.filter((field: any) => {
       const isVisible = shouldShowQuestion(field.logic?.rules, answers);
@@ -213,9 +218,7 @@ function App() {
     "BUILDER"
   );
   const [connectionMessage, setConnectionMessage] = useState<string | null>(
-    isPlaceholderActive
-      ? "Configuration Error: API_URL not set."
-      : "Checking connection..."
+    "Checking connection..."
   );
 
   // Data State
@@ -238,54 +241,61 @@ function App() {
     value: "",
   });
 
-  // --- AUTH CHECK: The Critical Fix ---
+  // --- AUTH STRATEGY: URL Token or LocalStorage ---
   useEffect(() => {
-    if (isPlaceholderActive) return;
-    verifyConnection();
+    const checkAuth = async () => {
+      // 1. Check if we just came back from Render with a token in the URL
+      const urlParams = new URLSearchParams(window.location.search);
+      const urlToken = urlParams.get('token');
+
+      if (urlToken) {
+        // Save it!
+        localStorage.setItem("authToken", urlToken);
+        // Clean the URL so the user doesn't see the ugly token
+        window.history.replaceState({}, document.title, "/");
+      }
+
+      // 2. Do we have a token now?
+      const token = localStorage.getItem("authToken");
+
+      if (token) {
+        // Verify it works
+        try {
+           await axios.get("/api/forms");
+           setIsConnected(true);
+           setConnectionMessage(null);
+           fetchBases();
+           fetchSavedForms();
+        } catch (e) {
+           console.log("Token invalid or expired");
+           localStorage.removeItem("authToken");
+           setIsConnected(false);
+           setConnectionMessage("Please connect your Airtable account.");
+        }
+      } else {
+        setIsConnected(false);
+        setConnectionMessage("Please connect your Airtable account.");
+      }
+    };
+
+    checkAuth();
   }, []);
-
-  const verifyConnection = async () => {
-    try {
-      // Instead of checking local cookies, we TRY to fetch data from the backend.
-      // Because 'withCredentials' is true, the cookie travels to Render.
-      // If Render accepts it, we are logged in.
-      await axios.get("/api/forms");
-
-      // If the above line didn't throw an error, we are connected!
-      setIsConnected(true);
-      setConnectionMessage(null);
-
-      // Now fetch the rest of the data
-      fetchBases();
-      fetchSavedForms();
-    } catch (e) {
-      // If we get a 401 error, it means we aren't logged in.
-      console.log("Not connected yet.");
-      setIsConnected(false);
-      setConnectionMessage("Please connect your Airtable account.");
-    }
-  };
 
   const fetchBases = async () => {
     try {
       const res = await axios.get(`/api/bases`);
       setBases(res.data);
-    } catch (e) {
-      console.error("Error fetching bases", e);
-    }
+    } catch (e) { console.error("Error fetching bases", e); }
   };
 
   const fetchSavedForms = async () => {
     try {
       const res = await axios.get(`/api/forms`);
       setSavedForms(res.data);
-    } catch (e) {
-      console.error("Error fetching forms", e);
-    }
+    } catch (e) { console.error("Error fetching forms", e); }
   };
 
   // --- Handlers ---
-
   const handleBaseChange = async (e: React.ChangeEvent<HTMLSelectElement>) => {
     const baseId = e.target.value;
     setSelectedBase(baseId);
@@ -295,9 +305,7 @@ function App() {
       try {
         const res = await axios.get(`/api/bases/${baseId}/tables`);
         setTables(res.data);
-      } catch (e) {
-        console.error(e);
-      }
+      } catch (e) { console.error(e); }
     }
   };
 
@@ -396,17 +404,15 @@ function App() {
         {!isConnected && (
           <div style={{ display: "flex", alignItems: "center", gap: "15px" }}>
             <span style={{ color: "#666" }}>{connectionMessage}</span>
-            {!isPlaceholderActive && (
-              <button
-                onClick={() => {
-                  const returnTo = encodeURIComponent(window.location.origin);
-                  window.location.href = `${API_URL}/auth/login?returnTo=${returnTo}`;
-                }}
-                style={AppStyles.connectBtn}
-              >
-                Connect Airtable
-              </button>
-            )}
+            <button
+              onClick={() => {
+                const returnTo = encodeURIComponent(window.location.origin);
+                window.location.href = `${API_URL}/auth/login?returnTo=${returnTo}`;
+              }}
+              style={AppStyles.connectBtn}
+            >
+              Connect Airtable
+            </button>
           </div>
         )}
 
