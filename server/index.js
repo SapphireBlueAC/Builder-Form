@@ -16,7 +16,8 @@ if (!process.env.AIRTABLE_CLIENT_ID) {
 }
 
 const app = express();
-app.use(cors({ origin: 'http://localhost:3000', credentials: true }));
+// Allow CORS from localhost:3000 and the deployed Vercel URL (must be set in Vercel)
+app.use(cors({ origin: 'http://localhost:3000', credentials: true })); 
 app.use(express.json());
 app.use(cookieParser());
 
@@ -79,9 +80,13 @@ app.get('/auth/login', (req, res) => {
   const challenge = base64URLEncode(sha256(verifier));
   res.cookie('auth_verifier', verifier, { httpOnly: true, maxAge: 300000 }); 
 
-  // FIX: Generate a cryptographically secure random state (was static 'random123')
-  const state = generateRandomString();
+  // NEW FIX: Get the return URL from the query, default to localhost
+  const frontendUrl = req.query.returnTo ? decodeURIComponent(req.query.returnTo.toString()) : 'http://localhost:3000/';
 
+  // Combine a security state string with the Base64URL-encoded frontend URL
+  const securityState = generateRandomString();
+  const state = `${securityState}--${base64URLEncode(Buffer.from(frontendUrl))}`;
+  
   const scopes = 'data.records:read data.records:write schema.bases:read webhook:manage user.email:read';
   
   // Trim environment variables to prevent hidden whitespace errors
@@ -128,9 +133,21 @@ app.get('/auth/callback', async (req, res) => {
       { new: true, upsert: true }
     );
 
+    // FINAL FIX: Logic to extract the dynamic Vercel URL from the state parameter
+    const { state } = req.query; // state is received from Airtable
+    let finalRedirectUrl = 'http://localhost:3000/'; // Fallback to localhost
+
+    if (state && typeof state === 'string' && state.includes('--')) {
+        const parts = state.split('--');
+        if (parts.length === 2) {
+            // Decode the Base64URL portion, which contains the frontend URL
+            finalRedirectUrl = Buffer.from(parts[1], 'base64').toString('utf8');
+        }
+    }
+
     res.clearCookie('auth_verifier');
     res.cookie('userId', user._id.toString(), { httpOnly: false });
-    res.redirect('http://localhost:3000/');
+    res.redirect(finalRedirectUrl); // <-- FIX: Redirects to the live Vercel URL
   } catch (error) {
     console.error("Auth Error:", error.response?.data || error.message);
     res.status(500).json({ error: "Auth failed" });
